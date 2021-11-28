@@ -68,10 +68,10 @@ int32_t libmpq__decompress_huffman(uint8_t *in_buf, uint32_t in_size, uint8_t *o
 	memset(is, 0, sizeof(struct huffman_input_stream_s));
 
 	/* initialize input stream. */
-	is->bit_buf  = *(uint32_t *)in_buf;
-	in_buf      += sizeof(int32_t);
-	is->in_buf   = (uint8_t *)in_buf;
-	is->bits     = 32;
+	is->in_buf_end = in_buf + in_size;
+	is->in_buf     = in_buf + 1;
+	is->bit_buf    = *in_buf;
+	is->bits       = 8;
 
 // TODO: add all the mallocs to init function and add function libmpq__huffman_tree_free() */
 //	if ((result = libmpq__huffman_tree_init(ht, LIBMPQ_HUFF_DECOMPRESS)) < 0) {

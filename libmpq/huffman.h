@@ -28,67 +28,68 @@
 #define _HUFFMAN_H
 
 /* define huffman compression and decompression values. */
-#define LIBMPQ_HUFF_DECOMPRESS			0		/* we want to decompress using huffman trees. */
-
-/* define pointer conversions. */
-#define PTR_NOT(ptr)				(struct huffman_tree_item_s *)(~(unsigned long)(ptr))
-#define PTR_PTR(ptr)				((struct huffman_tree_item_s *)(ptr))
-#define PTR_INT(ptr)				(long)(ptr)
+#define LIBMPQ_HUFF_DECOMPRESS			0			/* we want to decompress using huffman trees. */
+#define HUFF_ITEM_COUNT					0x203		/* number of items in the item pool. */
+#define LINK_ITEM_COUNT					0x80		/* maximum number of quick-link items. */
 
 /* define item handling. */
-#define INSERT_ITEM				1		/* insert item into huffman tree. */
-#define SWITCH_ITEMS				2		/* switch items isnide huffman tree. */
+#define INSERT_AFTER				1
+#define INSERT_BEFORE				2
 
 /* input stream for huffman decompression. */
 struct huffman_input_stream_s {
-	uint8_t		*in_buf;				/* 00 - input data. */
-	uint32_t	bit_buf;				/* 04 - input bit buffer. */
-	uint32_t	bits;					/* 08 - number of bits remaining in byte. */
+	uint8_t		*in_buf_end;			/* end position in the input buffer. */
+	uint8_t		*in_buf;				/* current position in the input buffer. */
+	uint16_t	bit_buf;				/* input bit buffer. */
+	uint16_t	bits;					/* number of bits remaining current position. */
 };
 
 /* huffman tree item. */
 struct huffman_tree_item_s {
-	struct		huffman_tree_item_s *next;		/* 00 - pointer to next huffman tree item. */
-	struct		huffman_tree_item_s *prev;		/* 04 - pointer to prev huffman tree item (< 0 if none). */
-	uint32_t	dcmp_byte;				/* 08 - index of this item in item pointer array, decompressed byte value. */
-	uint32_t	byte_value;				/* 0C - some byte value. */
-	struct		huffman_tree_item_s *parent;		/* 10 - pointer to parent huffman tree item (NULL if none). */
-	struct		huffman_tree_item_s *child;		/* 14 - pointer to child huffman tree item. */
+	struct		huffman_tree_item_s *next;		/* pointer to lower-weight tree item. */
+	struct		huffman_tree_item_s *prev;		/* pointer to higher-weight item. */
+	uint32_t	dcmp_byte;						/* decompressed byte value (also index in the array). */
+	uint32_t	weight;							/* weight. */
+	struct		huffman_tree_item_s *parent;	/* pointer to parent item (NULL if none). */
+	struct		huffman_tree_item_s *child;		/* pointer to the child with lower-weight child ("left child"). */
 };
 
 /* structure used for quick decompression. */
-struct huffman_decompress_s {
-	uint32_t	offs00;					/* 00 - 1 if resolved. */
-	uint32_t	bits;					/* 04 - bit count. */
+struct huffman_quick_link_s {
+	uint32_t	valid_value;						/* if greater than huffman tree min_valid_value, the entry is valid. */
+	uint32_t	valid_bits;							/* number of bits that are valid for this item link. */
 	union {
-		uint32_t	dcmp_byte;			/* 08 - byte value for decompress (if bitCount <= 7). */
-		struct		huffman_tree_item_s *p_item;	/* 08 - huffman tree item (if number of bits is greater than 7). */
+		struct		huffman_tree_item_s *hi;		/* pointer to the item within the huffman tree. */
+		uint32_t	dcmp_byte;						/* value for direct decompression. */
 	};
 };
 
 /* structure for huffman tree. */
 struct huffman_tree_s {
-	uint32_t	cmp0;					/* 0000 - 1 if compression type 0. */
-	uint32_t	offs0004;				/* 0004 - some flag. */
-	struct		huffman_tree_item_s items0008[0x203];	/* 0008 - huffman tree items. */
-	struct		huffman_tree_item_s *item3050;		/* 3050 - always NULL? */
-	struct		huffman_tree_item_s *item3054;		/* 3054 - pointer to huffman tree item. */
-	struct		huffman_tree_item_s *item3058;		/* 3058 - pointer to huffman tree item (< 0 if invalid). */
-	struct		huffman_tree_item_s *item305C;		/* 305C - usually NULL. */
-	struct		huffman_tree_item_s *first;		/* 3060 - pointer to top (first) huffman tree item. */
-	struct		huffman_tree_item_s *last;		/* 3064 - pointer to bottom (last) huffman tree item (< 0 if invalid). */
-	uint32_t	items;					/* 3068 - number of used huffman tree items. */
-	struct		huffman_tree_item_s *items306C[0x102];	/* 306C - huffman tree item pointer array. */
-	struct		huffman_decompress_s qd3474[0x80];	/* 3474 - array for quick decompression. */
-	uint8_t		table_1502A630[];			/* some table to make struct size flexible. */
+	struct		huffman_tree_item_s item_buffer[HUFF_ITEM_COUNT];	/* buffer for tree items. no memory allocation is needed. */
+	uint32_t	items_used;											/* number of tree items used from item_buffer */
+	struct		huffman_tree_item_s *first;							/* pointer to the highest weight item. */
+	struct		huffman_tree_item_s *last;							/* pointer to the lowest weight item. */
+	struct		huffman_tree_item_s *items_by_byte[0x102];			/* array of item pointers, one for each possible byte value. */
+	struct		huffman_quick_link_s quick_links[LINK_ITEM_COUNT];	/* array of quick-link items. */
+	uint32_t	min_valid_value;									/* a minimum value of quick link valid_value to be considered valid */
+	int			isCmp0;												/* true if compression type 0. */
 };
+
+/* creates a new item for the huffman tree. */
+struct huffman_tree_item_s *libmpq__create_new_item(
+	struct huffman_tree_s *ht,
+	uint32_t dcmp_value,
+	uint32_t weight,
+	uint32_t where
+);
 
 /* insert a new item into huffman tree. */
 void libmpq__huffman_insert_item(
-	struct		huffman_tree_item_s **p_item,
-	struct		huffman_tree_item_s *item,
+	struct		huffman_tree_s *ht,
+	struct		huffman_tree_item_s *hi,
 	uint32_t	where,
-	struct		huffman_tree_item_s *item2
+	struct		huffman_tree_item_s *insert_point
 );
 
 /* remove item from huffman tree. */
@@ -96,10 +97,17 @@ void libmpq__huffman_remove_item(
 	struct		huffman_tree_item_s *hi
 );
 
-/* get previous item from huffman tree. */
-struct huffman_tree_item_s *libmpq__huffman_previous_item(
+/* insert item2 after item1. */
+void libmpq__link_two_items(
+	struct		huffman_tree_item_s *item1,
+	struct		huffman_tree_item_s *item2
+);
+
+/* get huffman tree item with higher weight. */
+struct huffman_tree_item_s *libmpq__huffman_find_higher_or_equal_item(
+	struct		huffman_tree_s *ht,
 	struct		huffman_tree_item_s *hi,
-	long		value
+	uint32_t	weight
 );
 
 /* get one bit from stream. */
@@ -108,7 +116,7 @@ uint32_t libmpq__huffman_get_1bit(
 );
 
 /* get seven bit from stream. */
-uint32_t libmpq__huffman_get_7bit(
+uint32_t libmpq__huffman_peek_7bit(
 	struct		huffman_input_stream_s *is
 );
 
@@ -117,15 +125,10 @@ uint32_t libmpq__huffman_get_8bit(
 	struct		huffman_input_stream_s *is
 );
 
-/* call 1500E740. */
-struct huffman_tree_item_s *libmpq__huffman_call_1500E740(
-	struct		huffman_tree_s *ht
-);
-
-/* call 1500E820- */
-void libmpq__huffman_call_1500E820(
-	struct		huffman_tree_s *ht,
-	struct		huffman_tree_item_s *p_item
+/* skip over bits in the input stream without using them. */
+void libmpq__huffman_skip_bits(
+	struct huffman_input_stream_s *is,
+	uint32_t bits_to_skip
 );
 
 /* initialize the huffman tree. */
@@ -135,7 +138,7 @@ void libmpq__huffman_tree_init(
 );
 
 /* build the huffman tree. */
-void libmpq__huffman_tree_build(
+int libmpq__huffman_tree_build(
 	struct		huffman_tree_s *ht,
 	uint32_t	cmp_type
 );
@@ -146,6 +149,26 @@ int32_t libmpq__do_decompress_huffman(
 	struct		huffman_input_stream_s *is,
 	uint8_t		*out_buf,
 	uint32_t	out_length
+);
+
+/* maintain balance while inserting new item. */
+int libmpq__insert_new_branch_and_rebalance(
+	struct huffman_tree_s *ht,
+	uint32_t value1,
+	uint32_t value2
+);
+
+/* find place for new item and fix weights. */
+uint32_t libmpq__fixup_item_pos_by_weight(
+	struct huffman_tree_s *ht,
+	struct huffman_tree_item_s *new_item,
+	uint32_t max_weight
+);
+
+/* maintain balance while fixing weights of item ancestors. */
+void libmpq__inc_weights_and_rebalance(
+	struct huffman_tree_s *ht,
+	struct huffman_tree_item_s *item
 );
 
 #endif						/* _HUFFMAN_H */
